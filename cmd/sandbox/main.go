@@ -20,7 +20,12 @@ func main() {
 	var wg sync.WaitGroup
 
 	srv := spatial.New(25, 50, 100)
-	rects := spatial.GetBoundingBoxes(spatial.MapBounds{-10.0, -10.0, 10.0, 10.0})
+	rects := spatial.GetBoundingBoxes(spatial.MapBounds{
+		SouthWestLng: -10.0,
+		SouthWestLat: -10.0,
+		NorthEastLng: 10.0,
+		NorthEastLat: 10.0,
+	})
 
 	listeners := make([]*spatial.Listener, len(rects))
 	for i, rect := range rects {
