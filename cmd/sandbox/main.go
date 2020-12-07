@@ -17,27 +17,31 @@ type plane struct {
 }
 
 func main() {
+	var wg sync.WaitGroup
+
 	srv := spatial.New(25, 50, 100)
-	bounds, err := spatial.MakeBounds(-10.0, -10.0, 10.0, 10.0)
-	if err != nil {
-		panic(err)
+	rects := spatial.GetBoundingBoxes(spatial.MapBounds{-10.0, -10.0, 10.0, 10.0})
+
+	listeners := make([]*spatial.Listener, len(rects))
+	for i, rect := range rects {
+		listeners[i] = srv.Subscribe(rect)
 	}
 
-	updates := srv.Subscribe(bounds)
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	go func() {
-		for msg := range updates.Updates() {
-			fmt.Println(msg)
-		}
-		wg.Done()
-		fmt.Println("done reading updates")
-	}()
+	for i := range listeners {
+		lst := listeners[i]
+		wg.Add(1)
+		go func() {
+			for msg := range lst.Updates() {
+				fmt.Println(msg)
+			}
+			fmt.Println("done reading updates")
+			wg.Done()
+		}()
+	}
 
 	p := &plane{"U-AQ7E"}
 
-	_, err = srv.Add(0, 0, planeSizeLng, planeSizeLat, p.id, p)
+	_, err := srv.Add(0, 0, planeSizeLng, planeSizeLat, p.id, p)
 	if err != nil {
 		panic(err)
 	}
@@ -52,7 +56,9 @@ func main() {
 		panic(err)
 	}
 
-	updates.Unsubscribe()
-	wg.Wait()
+	for _, lst := range listeners {
+		lst.Unsubscribe()
+	}
 
+	wg.Wait()
 }
