@@ -54,7 +54,7 @@ func split(c MapBounds) []MapBounds {
 }
 
 // GetBoundingBoxes returns a list of Rects supporint latitude/longitude wrapping
-func GetBoundingBoxes(mb MapBounds) []*rtreego.Rect {
+func getBoundingBoxes(mb MapBounds) []*rtreego.Rect {
 	boxes := split(mb)
 	rects := make([]*rtreego.Rect, len(boxes))
 	for i, box := range boxes {

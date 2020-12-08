@@ -2,12 +2,6 @@ package spatial
 
 import (
 	"fmt"
-
-	"github.com/dhconnelly/rtreego"
-)
-
-var (
-	listenerInc = 0
 )
 
 // UpdateAction is a enum describing update actions
@@ -41,20 +35,9 @@ func (u Update) String() string {
 
 // Listener listens to updates in index
 type Listener struct {
-	bounds *rtreego.Rect
-	u      chan Update
-	id     string
-	srv    *Server
-}
-
-// ID implements Indexable
-func (l *Listener) ID() string {
-	return l.id
-}
-
-// Bounds implements Indexable
-func (l *Listener) Bounds() *rtreego.Rect {
-	return l.bounds
+	u     chan Update
+	srv   *Server
+	boxes []*watchBox
 }
 
 // Updates returns the data channel of the listener
@@ -76,6 +59,6 @@ func (l *Listener) add(obj Indexable) {
 
 // Unsubscribe closes the channel and removes listener from the index
 func (l *Listener) Unsubscribe() {
-	l.srv.removeListener(l.id)
+	l.srv.removeListenerWatchBoxes(l)
 	close(l.u)
 }

@@ -63,8 +63,8 @@ func (s *Server) Add(
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	var rmLstrs map[string]*Listener
-	var addLstrs map[string]*Listener
+	var rmLstrs map[*Listener]*Listener
+	var addLstrs map[*Listener]*Listener
 
 	obj, err := newObject(lat, lng, width, height, id, ref)
 	if err != nil {
@@ -73,9 +73,9 @@ func (s *Server) Add(
 
 	prev := s.update(obj)
 	if prev != nil {
-		rmLstrs = s.listeners(prev)
+		rmLstrs = s.findListeners(prev)
 	}
-	addLstrs = s.listeners(obj)
+	addLstrs = s.findListeners(obj)
 
 	if rmLstrs == nil {
 		for _, l := range addLstrs {
@@ -87,7 +87,7 @@ func (s *Server) Add(
 		update := make([]*Listener, 0)
 
 		for _, al := range addLstrs {
-			if _, found := rmLstrs[al.id]; found {
+			if _, found := rmLstrs[al]; found {
 				update = append(addOnly, al)
 			} else {
 				addOnly = append(addOnly, al)
@@ -95,7 +95,7 @@ func (s *Server) Add(
 		}
 
 		for _, rl := range rmLstrs {
-			if _, found := addLstrs[rl.id]; !found {
+			if _, found := addLstrs[rl]; !found {
 				removeOnly = append(removeOnly, rl)
 			}
 		}
@@ -121,7 +121,7 @@ func (s *Server) Remove(id string) bool {
 	obj, found := s.idIdx[id]
 
 	if found {
-		lstrs := s.listeners(obj)
+		lstrs := s.findListeners(obj)
 		for _, l := range lstrs {
 			l.remove(obj)
 		}
@@ -132,43 +132,56 @@ func (s *Server) Remove(id string) bool {
 }
 
 // Subscribe returns a listener with a channel transmitting index updates
-func (s *Server) Subscribe(bounds *rtreego.Rect) *Listener {
+func (s *Server) Subscribe(bounds MapBounds) *Listener {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	listenerInc++
-	listenerID := fmt.Sprintf("lst_%d", listenerInc)
-	l := &Listener{
-		bounds: bounds,
-		id:     listenerID,
-		u:      make(chan Update, s.chSize),
-		srv:    s,
+	rects := getBoundingBoxes(bounds)
+	boxes := make([]*watchBox, len(rects))
+	lstr := new(Listener)
+	for i, rect := range rects {
+		wbAutoinc++
+		id := fmt.Sprintf("wb:%d", wbAutoinc)
+		boxes[i] = &watchBox{
+			rect:     rect,
+			id:       id,
+			srv:      s,
+			listener: lstr,
+		}
+		s.tree.Insert(boxes[i])
+		s.idIdx[id] = boxes[i]
 	}
-	s.tree.Insert(l)
-	s.idIdx[l.id] = l
 
-	return l
+	lstr.u = make(chan Update, s.chSize)
+	lstr.srv = s
+	lstr.boxes = boxes
+
+	return lstr
 }
 
-func (s *Server) listeners(obj Indexable) map[string]*Listener {
+func (s *Server) findListeners(obj Indexable) map[*Listener]*Listener {
 	objs := s.tree.SearchIntersect(obj.Bounds())
-	lstrs := make(map[string]*Listener)
+
+	lmap := make(map[*Listener]*Listener)
+
 	for _, obj := range objs {
-		lst, ok := obj.(*Listener)
+		wb, ok := obj.(*watchBox)
 		if ok {
-			lstrs[lst.id] = lst
+			lmap[wb.listener] = wb.listener
 		}
 	}
-	return lstrs
+
+	return lmap
 }
 
-func (s *Server) removeListener(id string) {
+func (s *Server) removeListenerWatchBoxes(listener *Listener) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	lst, found := s.idIdx[id]
 
-	if found {
-		s.tree.Delete(lst)
-		delete(s.idIdx, id)
+	for _, wb := range listener.boxes {
+		if _, found := s.idIdx[wb.id]; found {
+			s.tree.Delete(wb)
+			delete(s.idIdx, wb.id)
+		}
 	}
 }
