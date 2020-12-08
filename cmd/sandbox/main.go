@@ -20,29 +20,22 @@ func main() {
 	var wg sync.WaitGroup
 
 	srv := spatial.New(25, 50, 100)
-	rects := spatial.GetBoundingBoxes(spatial.MapBounds{
+
+	listener := srv.Subscribe(spatial.MapBounds{
 		SouthWestLng: -10.0,
 		SouthWestLat: -10.0,
 		NorthEastLng: 10.0,
 		NorthEastLat: 10.0,
 	})
 
-	listeners := make([]*spatial.Listener, len(rects))
-	for i, rect := range rects {
-		listeners[i] = srv.Subscribe(rect)
-	}
-
-	for i := range listeners {
-		lst := listeners[i]
-		wg.Add(1)
-		go func() {
-			for msg := range lst.Updates() {
-				fmt.Println(msg)
-			}
-			fmt.Println("done reading updates")
-			wg.Done()
-		}()
-	}
+	wg.Add(1)
+	go func() {
+		for msg := range listener.Updates() {
+			fmt.Println(msg)
+		}
+		fmt.Println("done reading updates")
+		wg.Done()
+	}()
 
 	p := &plane{"U-AQ7E"}
 
@@ -61,9 +54,7 @@ func main() {
 		panic(err)
 	}
 
-	for _, lst := range listeners {
-		lst.Unsubscribe()
-	}
+	listener.Unsubscribe()
 
 	wg.Wait()
 }
