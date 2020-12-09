@@ -1,64 +1,47 @@
 package spatial
 
-import (
-	"fmt"
-)
+import "time"
 
 // UpdateAction is a enum describing update actions
 type UpdateAction int
 
-// UpdateAction enum definition
-const (
-	UAAdd UpdateAction = iota
-	UARemove
-	UAUpdate
-)
-
-// Update is an object transmitting via listener's chan
-type Update struct {
-	Object Indexable
-	Action UpdateAction
-}
-
-func (u Update) String() string {
-	action := ""
-	switch u.Action {
-	case UAAdd:
-		action = "Add"
-	case UARemove:
-		action = "Remove"
-	case UAUpdate:
-		action = "Update"
-	}
-	return fmt.Sprintf(action+" object %v, %v", u.Object.ID(), u.Object.Bounds())
-}
-
 // Listener listens to updates in index
 type Listener struct {
-	u     chan Update
-	srv   *Server
-	boxes []*watchBox
+	ch      chan []Indexable
+	srv     *Server
+	boxes   []*watchBox
+	dirty   bool
+	stopped bool
 }
 
-// Updates returns the data channel of the listener
-func (l *Listener) Updates() <-chan Update {
-	return l.u
-}
-
-func (l *Listener) remove(obj Indexable) {
-	l.u <- Update{obj, UARemove}
-}
-
-func (l *Listener) update(obj Indexable) {
-	l.u <- Update{obj, UAUpdate}
-}
-
-func (l *Listener) add(obj Indexable) {
-	l.u <- Update{obj, UAAdd}
+// Updates returns the update channel of the listener
+func (l *Listener) Updates() <-chan []Indexable {
+	return l.ch
 }
 
 // Unsubscribe closes the channel and removes listener from the index
 func (l *Listener) Unsubscribe() {
-	l.srv.removeListenerWatchBoxes(l)
-	close(l.u)
+	l.stopped = true
+	l.srv.removeBoxes(l.boxes)
+	close(l.ch)
+}
+
+func (l *Listener) loop() {
+	t := time.NewTicker(l.srv.interval)
+	defer t.Stop()
+
+	for range t.C {
+		if l.stopped {
+			break
+		}
+		if l.dirty {
+			objmap := l.srv.findObjects(l.boxes)
+			objects := make([]Indexable, 0)
+			for _, obj := range objmap {
+				objects = append(objects, obj)
+			}
+			l.ch <- objects
+			l.dirty = false
+		}
+	}
 }
