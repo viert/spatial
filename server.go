@@ -3,6 +3,7 @@ package spatial
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/dhconnelly/rtreego"
 )
@@ -15,24 +16,27 @@ const (
 type Indexable interface {
 	ID() string
 	Bounds() *rtreego.Rect
+	Ref() interface{}
 }
 
 // Server is the main 2D index server object
 type Server struct {
-	tree   *rtreego.Rtree
-	idIdx  map[string]Indexable
-	chSize int
-	lock   sync.RWMutex
+	tree     *rtreego.Rtree
+	idIdx    map[string]Indexable
+	chSize   int
+	lock     sync.RWMutex
+	interval time.Duration
 }
 
 // New creates a new server. minBranch and maxBranch are the RTree branching properties
 // Refer to https://github.com/dhconnelly/rtreego
-func New(minBranch int, maxBranch int, updateChanSize int) *Server {
+func New(minBranch int, maxBranch int, updateChanSize int, notifyInterval time.Duration) *Server {
 	t := rtreego.NewTree(2, minBranch, maxBranch)
 	return &Server{
-		tree:   t,
-		idIdx:  make(map[string]Indexable),
-		chSize: updateChanSize,
+		tree:     t,
+		idIdx:    make(map[string]Indexable),
+		chSize:   updateChanSize,
+		interval: notifyInterval,
 	}
 }
 
@@ -74,41 +78,14 @@ func (s *Server) Add(
 	prev := s.update(obj)
 	if prev != nil {
 		rmLstrs = s.findListeners(prev)
+		for _, lst := range rmLstrs {
+			lst.dirty = true
+		}
 	}
+
 	addLstrs = s.findListeners(obj)
-
-	if rmLstrs == nil {
-		for _, l := range addLstrs {
-			l.add(obj)
-		}
-	} else {
-		addOnly := make([]*Listener, 0)
-		removeOnly := make([]*Listener, 0)
-		update := make([]*Listener, 0)
-
-		for _, al := range addLstrs {
-			if _, found := rmLstrs[al]; found {
-				update = append(addOnly, al)
-			} else {
-				addOnly = append(addOnly, al)
-			}
-		}
-
-		for _, rl := range rmLstrs {
-			if _, found := addLstrs[rl]; !found {
-				removeOnly = append(removeOnly, rl)
-			}
-		}
-
-		for _, l := range addOnly {
-			l.add(obj)
-		}
-		for _, l := range removeOnly {
-			l.remove(obj)
-		}
-		for _, l := range update {
-			l.update(obj)
-		}
+	for _, lst := range addLstrs {
+		lst.dirty = true
 	}
 
 	return obj, nil
@@ -123,7 +100,7 @@ func (s *Server) Remove(id string) bool {
 	if found {
 		lstrs := s.findListeners(obj)
 		for _, l := range lstrs {
-			l.remove(obj)
+			l.dirty = true
 		}
 		s.tree.Delete(obj)
 		delete(s.idIdx, id)
@@ -138,7 +115,14 @@ func (s *Server) Subscribe(bounds MapBounds) *Listener {
 
 	rects := getBoundingBoxes(bounds)
 	boxes := make([]*watchBox, len(rects))
-	lstr := new(Listener)
+
+	lstr := &Listener{
+		ch:      make(chan []Indexable, s.chSize),
+		srv:     s,
+		dirty:   true,
+		stopped: false,
+	}
+
 	for i, rect := range rects {
 		wbAutoinc++
 		id := fmt.Sprintf("wb:%d", wbAutoinc)
@@ -152,9 +136,8 @@ func (s *Server) Subscribe(bounds MapBounds) *Listener {
 		s.idIdx[id] = boxes[i]
 	}
 
-	lstr.u = make(chan Update, s.chSize)
-	lstr.srv = s
 	lstr.boxes = boxes
+	go lstr.loop()
 
 	return lstr
 }
@@ -174,11 +157,25 @@ func (s *Server) findListeners(obj Indexable) map[*Listener]*Listener {
 	return lmap
 }
 
-func (s *Server) removeListenerWatchBoxes(listener *Listener) {
+func (s *Server) findObjects(boxes []*watchBox) map[string]Indexable {
+	objects := make(map[string]Indexable)
+	for _, box := range boxes {
+		indexables := s.tree.SearchIntersect(box.Bounds())
+		for _, idxbl := range indexables {
+			obj, ok := idxbl.(*Object)
+			if ok {
+				objects[obj.id] = obj
+			}
+		}
+	}
+	return objects
+}
+
+func (s *Server) removeBoxes(boxes []*watchBox) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	for _, wb := range listener.boxes {
+	for _, wb := range boxes {
 		if _, found := s.idIdx[wb.id]; found {
 			s.tree.Delete(wb)
 			delete(s.idIdx, wb.id)

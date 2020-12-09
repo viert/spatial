@@ -22,3 +22,7 @@ func (w *watchBox) ID() string {
 func (w *watchBox) Bounds() *rtreego.Rect {
 	return w.rect
 }
+
+func (w *watchBox) Ref() interface{} {
+	return nil
+}
