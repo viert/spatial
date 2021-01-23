@@ -1,184 +1,151 @@
 package spatial
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
 	"github.com/dhconnelly/rtreego"
 )
 
-const (
-	userObjectPrefix = "u:"
-)
-
-// Indexable is an interface for objects stored in spacial index
-type Indexable interface {
-	ID() string
-	Bounds() *rtreego.Rect
-	Ref() interface{}
-}
-
-// Server is the main 2D index server object
+// Server represents spatial index server
 type Server struct {
-	tree     *rtreego.Rtree
-	idIdx    map[string]Indexable
-	chSize   int
-	lock     sync.RWMutex
-	interval time.Duration
+	tree   *rtreego.Rtree
+	idSubs map[string]map[*Listener]*Listener
+	idIdx  map[string]Indexable
+	lock   sync.RWMutex
 }
 
-// New creates a new server. minBranch and maxBranch are the RTree branching properties
-// Refer to https://github.com/dhconnelly/rtreego
+// New creates and initializes a new spatial Server
 func New(minBranch int, maxBranch int, updateChanSize int, notifyInterval time.Duration) *Server {
 	t := rtreego.NewTree(2, minBranch, maxBranch)
 	return &Server{
-		tree:     t,
-		idIdx:    make(map[string]Indexable),
-		chSize:   updateChanSize,
-		interval: notifyInterval,
+		tree:   t,
+		idSubs: make(map[string]map[*Listener]*Listener),
+		idIdx:  make(map[string]Indexable),
 	}
 }
 
-func (s *Server) update(obj Indexable) Indexable {
-	var result Indexable
-
-	id := obj.ID()
-	if existing, found := s.idIdx[id]; found {
-		s.tree.Delete(existing)
-		result = existing
+func (s *Server) subscribeID(l *Listener, id string) {
+	if _, found := s.idSubs[id]; !found {
+		s.idSubs[id] = make(map[*Listener]*Listener)
 	}
-	s.tree.Insert(obj)
-	s.idIdx[id] = obj
-
-	return result
+	s.idSubs[id][l] = l
 }
 
-// Add adds an object of a given size and given coordinates to index or modifies
-// an existing one if the object with the same ID is present
-func (s *Server) Add(
-	lat float64,
-	lng float64,
-	width float64,
-	height float64,
-	id string,
-	ref interface{},
-) (*Object, error) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	var rmLstrs map[*Listener]*Listener
-	var addLstrs map[*Listener]*Listener
-
-	obj, err := newObject(lat, lng, width, height, id, ref)
-	if err != nil {
-		return nil, err
-	}
-
-	prev := s.update(obj)
-	if prev != nil {
-		rmLstrs = s.findListeners(prev)
-		for _, lst := range rmLstrs {
-			lst.dirty = true
+func (s *Server) unsubscribeID(l *Listener, id string) {
+	if idmap, found := s.idSubs[id]; found {
+		if _, found = idmap[l]; found {
+			delete(idmap, l)
 		}
 	}
-
-	addLstrs = s.findListeners(obj)
-	for _, lst := range addLstrs {
-		lst.dirty = true
-	}
-
-	return obj, nil
 }
 
-// Remove removes the object by id and returns true if it was actually deleted
-func (s *Server) Remove(id string) bool {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-	obj, found := s.idIdx[id]
+func (s *Server) findObjectsByIDs(ids map[string]bool) map[string]Indexable {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
 
-	if found {
-		lstrs := s.findListeners(obj)
-		for _, l := range lstrs {
-			l.dirty = true
-		}
-		s.tree.Delete(obj)
-		delete(s.idIdx, id)
-	}
-	return found
-}
-
-// Subscribe returns a listener with a channel transmitting index updates
-func (s *Server) Subscribe(bounds MapBounds) *Listener {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	rects := getBoundingBoxes(bounds)
-	boxes := make([]*watchBox, len(rects))
-
-	lstr := &Listener{
-		ch:      make(chan []Indexable, s.chSize),
-		srv:     s,
-		dirty:   true,
-		stopped: false,
-	}
-
-	for i, rect := range rects {
-		wbAutoinc++
-		id := fmt.Sprintf("wb:%d", wbAutoinc)
-		boxes[i] = &watchBox{
-			rect:     rect,
-			id:       id,
-			srv:      s,
-			listener: lstr,
-		}
-		s.tree.Insert(boxes[i])
-		s.idIdx[id] = boxes[i]
-	}
-
-	lstr.boxes = boxes
-	go lstr.loop()
-
-	return lstr
-}
-
-func (s *Server) findListeners(obj Indexable) map[*Listener]*Listener {
-	objs := s.tree.SearchIntersect(obj.Bounds())
-
-	lmap := make(map[*Listener]*Listener)
-
-	for _, obj := range objs {
-		wb, ok := obj.(*watchBox)
-		if ok {
-			lmap[wb.listener] = wb.listener
+	results := make(map[string]Indexable)
+	for id := range ids {
+		if obj, found := s.idIdx[id]; found {
+			results[obj.ID()] = obj
 		}
 	}
-
-	return lmap
+	return results
 }
 
-func (s *Server) findObjects(boxes []*watchBox) map[string]Indexable {
-	objects := make(map[string]Indexable)
+func (s *Server) findObjectsByBoundingBoxes(boxes []*boundingBox) map[string]Indexable {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
+	results := make(map[string]Indexable)
 	for _, box := range boxes {
-		indexables := s.tree.SearchIntersect(box.Bounds())
-		for _, idxbl := range indexables {
-			obj, ok := idxbl.(*Object)
-			if ok {
-				objects[obj.id] = obj
+		rect := box.bounds
+		spatials := s.tree.SearchIntersect(rect)
+		for _, sp := range spatials {
+			if idxbl, ok := sp.(Indexable); ok {
+				results[idxbl.ID()] = idxbl
 			}
 		}
 	}
-	return objects
+
+	return results
 }
 
-func (s *Server) removeBoxes(boxes []*watchBox) {
+func (s *Server) findBoundingBoxesByObject(idx Indexable) []boundingBox {
+	intersections := s.tree.SearchIntersect(idx.Bounds())
+	boxes := make([]boundingBox, 0)
+	for _, obj := range intersections {
+		idxbl, ok := obj.(Indexable)
+		if ok && idxbl.Type() == itBoundingBox {
+			if box, ok := idxbl.(boundingBox); ok {
+				boxes = append(boxes, box)
+			}
+		}
+	}
+	return boxes
+
+}
+
+// Add adds a new object if it doesn't exist (checking by it's ID())
+// or modifies existing one, and notifies listeners
+func (s *Server) Add(obj Indexable) {
+	var rmListeners map[*Listener]*Listener
+	var addListeners map[*Listener]*Listener
+
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	for _, wb := range boxes {
-		if _, found := s.idIdx[wb.id]; found {
-			s.tree.Delete(wb)
-			delete(s.idIdx, wb.id)
+	if curr, found := s.idIdx[obj.ID()]; found {
+		// collect listeners to remove obj from
+		boxes := s.findBoundingBoxesByObject(curr)
+		rmListeners = collectListeners(boxes)
+		s.tree.Delete(curr)
+	} else {
+		s.idIdx[obj.ID()] = obj
+	}
+
+	s.tree.Insert(obj)
+	boxes := s.findBoundingBoxesByObject(obj)
+	addListeners = collectListeners(boxes)
+
+	for l := range rmListeners {
+		l.setDirty()
+	}
+	for l := range addListeners {
+		l.setDirty()
+	}
+
+	if lmap, found := s.idSubs[obj.ID()]; found {
+		for l := range lmap {
+			l.setDirty()
 		}
 	}
+}
+
+// Remove removes a given object from the index and notifies listeners
+func (s *Server) Remove(obj Indexable) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	if curr, found := s.idIdx[obj.ID()]; found {
+		// collect listeners to remove obj from
+		boxes := s.findBoundingBoxesByObject(curr)
+		listeners := collectListeners(boxes)
+		s.tree.Delete(curr)
+
+		for l := range listeners {
+			l.setDirty()
+		}
+
+		if lmap, found := s.idSubs[obj.ID()]; found {
+			for l := range lmap {
+				l.setDirty()
+			}
+		}
+	}
+}
+
+// NewListener creates and returns a new listener
+func (s *Server) NewListener(chSize int, interval time.Duration) *Listener {
+	return newListener(s, chSize, interval)
 }
