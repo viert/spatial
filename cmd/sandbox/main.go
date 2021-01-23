@@ -58,15 +58,21 @@ func main() {
 	var wg sync.WaitGroup
 	planeID := "RF-350"
 
-	srv := spatial.New(25, 50, 100, time.Second)
-	lst := srv.NewListener(100, time.Second)
-	lst.SubscribeID(planeID)
+	srv := spatial.New(25, 50, 100)
+	lst := srv.NewListener(100, 300*time.Millisecond)
+	lst.SetBounds(spatial.MapBounds{
+		SouthWestLng: -10,
+		SouthWestLat: -10,
+		NorthEastLng: 10,
+		NorthEastLat: 10,
+	})
 
 	wg.Add(1)
 	go func() {
 		for update := range lst.Updates() {
+			fmt.Println("got update")
 			for _, idxbl := range update {
-				fmt.Println(idxbl)
+				fmt.Println("from update", idxbl)
 			}
 		}
 		wg.Done()
@@ -78,8 +84,14 @@ func main() {
 	time.Sleep(time.Second)
 
 	p = makePlane(planeID, 2, 2)
-	srv.Add(p)
 	fmt.Println("moved")
+	srv.Add(p)
+
+	time.Sleep(time.Second)
+
+	p = makePlane(planeID, 12, 12)
+	fmt.Println("moved outside")
+	srv.Add(p)
 
 	time.Sleep(time.Second)
 

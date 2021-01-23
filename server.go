@@ -16,7 +16,7 @@ type Server struct {
 }
 
 // New creates and initializes a new spatial Server
-func New(minBranch int, maxBranch int, updateChanSize int, notifyInterval time.Duration) *Server {
+func New(minBranch int, maxBranch int, updateChanSize int) *Server {
 	t := rtreego.NewTree(2, minBranch, maxBranch)
 	return &Server{
 		tree:   t,
@@ -63,7 +63,9 @@ func (s *Server) findObjectsByBoundingBoxes(boxes []*boundingBox) map[string]Ind
 		spatials := s.tree.SearchIntersect(rect)
 		for _, sp := range spatials {
 			if idxbl, ok := sp.(Indexable); ok {
-				results[idxbl.ID()] = idxbl
+				if idxbl.Type() > 0 {
+					results[idxbl.ID()] = idxbl
+				}
 			}
 		}
 	}
@@ -77,13 +79,12 @@ func (s *Server) findBoundingBoxesByObject(idx Indexable) []boundingBox {
 	for _, obj := range intersections {
 		idxbl, ok := obj.(Indexable)
 		if ok && idxbl.Type() == itBoundingBox {
-			if box, ok := idxbl.(boundingBox); ok {
-				boxes = append(boxes, box)
+			if box, ok := idxbl.(*boundingBox); ok {
+				boxes = append(boxes, *box)
 			}
 		}
 	}
 	return boxes
-
 }
 
 // Add adds a new object if it doesn't exist (checking by it's ID())
@@ -100,11 +101,11 @@ func (s *Server) Add(obj Indexable) {
 		boxes := s.findBoundingBoxesByObject(curr)
 		rmListeners = collectListeners(boxes)
 		s.tree.Delete(curr)
-	} else {
-		s.idIdx[obj.ID()] = obj
 	}
+	s.idIdx[obj.ID()] = obj
 
 	s.tree.Insert(obj)
+
 	boxes := s.findBoundingBoxesByObject(obj)
 	addListeners = collectListeners(boxes)
 

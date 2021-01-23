@@ -115,6 +115,7 @@ func (l *Listener) loop() {
 			}
 
 			l.ch <- objects
+			l.dirty = false
 		}
 		l.lock.RUnlock()
 	}
