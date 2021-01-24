@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dhconnelly/rtreego"
 	"github.com/viert/spatial"
 )
 
@@ -14,61 +15,86 @@ const (
 )
 
 type plane struct {
-	id string
+	id   string
+	rect *rtreego.Rect
+}
+
+func (p *plane) String() string {
+	return fmt.Sprintf("Plane \"%s\" %s", p.id, p.rect)
+}
+
+func (p *plane) ID() string {
+	return p.id
+}
+
+func (p *plane) Bounds() *rtreego.Rect {
+	return p.rect
+}
+
+func (p *plane) Ref() interface{} {
+	return nil
+}
+
+func (p *plane) Type() spatial.IndexableType {
+	return 1
+}
+
+func makePlane(id string, lat float64, lng float64) *plane {
+	mb := spatial.MapBounds{
+		SouthWestLat: lat,
+		SouthWestLng: lng,
+		NorthEastLat: lat + planeSizeLat,
+		NorthEastLng: lng + planeSizeLng,
+	}
+	rect := mb.Rects()[0]
+	p := &plane{
+		id,
+		rect,
+	}
+	return p
 }
 
 func main() {
 	var wg sync.WaitGroup
+	planeID := "RF-350"
 
-	srv := spatial.New(25, 50, 100, time.Second)
-
-	listener := srv.Subscribe(spatial.MapBounds{
-		SouthWestLng: -10.0,
-		SouthWestLat: -10.0,
-		NorthEastLng: 10.0,
-		NorthEastLat: 10.0,
+	srv := spatial.New(25, 50)
+	lst := srv.NewListener(100, 300*time.Millisecond)
+	lst.SetBounds(spatial.MapBounds{
+		SouthWestLng: -10,
+		SouthWestLat: -10,
+		NorthEastLng: 10,
+		NorthEastLat: 10,
 	})
 
 	wg.Add(1)
 	go func() {
-		for msg := range listener.Updates() {
-			fmt.Printf("update count: %d\n", len(msg))
-			for _, idxbl := range msg {
-				ref := idxbl.Ref()
-				p, ok := ref.(*plane)
-				if ok {
-					fmt.Println(p)
-				}
+		for update := range lst.Updates() {
+			fmt.Println("got update")
+			for _, idxbl := range update {
+				fmt.Println("from update", idxbl)
 			}
 		}
-		fmt.Println("done reading updates")
 		wg.Done()
 	}()
 
-	p := &plane{"U-AQ7E"}
-
+	p := makePlane(planeID, 0, 0)
+	srv.Add(p)
 	fmt.Println("added")
-	_, err := srv.Add(0, 0, planeSizeLng, planeSizeLat, p.id, p)
-	if err != nil {
-		panic(err)
-	}
-	time.Sleep(2 * time.Second)
+	time.Sleep(time.Second)
 
+	p = makePlane(planeID, 2, 2)
 	fmt.Println("moved")
-	_, err = srv.Add(3, 3, planeSizeLng, planeSizeLat, p.id, p)
-	if err != nil {
-		panic(err)
-	}
-	time.Sleep(2 * time.Second)
+	srv.Add(p)
 
+	time.Sleep(time.Second)
+
+	p = makePlane(planeID, 12, 12)
 	fmt.Println("moved outside")
-	_, err = srv.Add(12, 12, planeSizeLng, planeSizeLat, p.id, p)
-	if err != nil {
-		panic(err)
-	}
-	time.Sleep(2 * time.Second)
+	srv.Add(p)
 
-	listener.Unsubscribe()
+	time.Sleep(time.Second)
 
+	lst.Stop()
 	wg.Wait()
 }
