@@ -32,6 +32,18 @@ func newListener(srv *Server, chSize int, interval time.Duration) *Listener {
 	return lstr
 }
 
+func (l *Listener) disposeBoxes() {
+	for _, box := range l.boxes {
+		l.srv.tree.Delete(box)
+	}
+}
+
+func (l *Listener) unsubscribeAll() {
+	for id := range l.watchIds {
+		l.srv.unsubscribeID(l, id)
+	}
+}
+
 // SetBounds sets bounds to listen to
 func (l *Listener) SetBounds(mb MapBounds) {
 	l.lock.Lock()
@@ -39,9 +51,7 @@ func (l *Listener) SetBounds(mb MapBounds) {
 	defer l.lock.Unlock()
 	defer l.srv.lock.Unlock()
 
-	for _, box := range l.boxes {
-		l.srv.tree.Delete(box)
-	}
+	l.disposeBoxes()
 
 	rects := mb.Rects()
 	boxes := make([]*boundingBox, len(rects))
@@ -56,14 +66,23 @@ func (l *Listener) SetBounds(mb MapBounds) {
 // Stop stops the listener, closes all the channels so it's free to cleanup by GC
 func (l *Listener) Stop() {
 	l.lock.Lock()
+	l.srv.lock.Lock()
 	defer l.lock.Unlock()
+	defer l.srv.lock.Unlock()
+
+	l.disposeBoxes()
+	l.unsubscribeAll()
+
 	l.stopped = true
 }
 
 // SubscribeID adds a specific id to watch
 func (l *Listener) SubscribeID(id string) {
 	l.lock.Lock()
+	l.srv.lock.Lock()
 	defer l.lock.Unlock()
+	defer l.srv.lock.Unlock()
+
 	l.watchIds[id] = true
 	l.srv.subscribeID(l, id)
 }
@@ -71,7 +90,10 @@ func (l *Listener) SubscribeID(id string) {
 // UnsubscribeID unsubscribes from a specific id
 func (l *Listener) UnsubscribeID(id string) {
 	l.lock.Lock()
+	l.srv.lock.Lock()
 	defer l.lock.Unlock()
+	defer l.srv.lock.Unlock()
+
 	delete(l.watchIds, id)
 	l.srv.unsubscribeID(l, id)
 }
