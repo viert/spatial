@@ -58,7 +58,7 @@ func main() {
 	var wg sync.WaitGroup
 	planeID := "RF-350"
 
-	srv := spatial.New(25, 50, 100)
+	srv := spatial.New(25, 50)
 	lst := srv.NewListener(100, 300*time.Millisecond)
 	lst.SetBounds(spatial.MapBounds{
 		SouthWestLng: -10,

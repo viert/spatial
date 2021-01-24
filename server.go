@@ -16,7 +16,7 @@ type Server struct {
 }
 
 // New creates and initializes a new spatial Server
-func New(minBranch int, maxBranch int, updateChanSize int) *Server {
+func New(minBranch int, maxBranch int) *Server {
 	t := rtreego.NewTree(2, minBranch, maxBranch)
 	return &Server{
 		tree:   t,
