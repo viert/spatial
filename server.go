@@ -3,13 +3,11 @@ package spatial
 import (
 	"sync"
 	"time"
-
-	"github.com/dhconnelly/rtreego"
 )
 
 // Server represents spatial index server
 type Server struct {
-	tree   *rtreego.Rtree
+	tree   *SafeRtree
 	idSubs map[string]map[*Listener]*Listener
 	idIdx  map[string]Indexable
 	lock   sync.RWMutex
@@ -17,7 +15,7 @@ type Server struct {
 
 // New creates and initializes a new spatial Server
 func New(minBranch int, maxBranch int) *Server {
-	t := rtreego.NewTree(2, minBranch, maxBranch)
+	t := NewSafeRtree(2, minBranch, maxBranch)
 	return &Server{
 		tree:   t,
 		idSubs: make(map[string]map[*Listener]*Listener),
@@ -26,6 +24,8 @@ func New(minBranch int, maxBranch int) *Server {
 }
 
 func (s *Server) subscribeID(l *Listener, id string) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	if _, found := s.idSubs[id]; !found {
 		s.idSubs[id] = make(map[*Listener]*Listener)
 	}
@@ -33,6 +33,8 @@ func (s *Server) subscribeID(l *Listener, id string) {
 }
 
 func (s *Server) unsubscribeID(l *Listener, id string) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	if idmap, found := s.idSubs[id]; found {
 		if _, found = idmap[l]; found {
 			delete(idmap, l)
@@ -93,16 +95,18 @@ func (s *Server) Add(obj Indexable) {
 	var rmListeners map[*Listener]*Listener
 	var addListeners map[*Listener]*Listener
 
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	if curr, found := s.idIdx[obj.ID()]; found {
+	s.lock.RLock()
+	curr, found := s.idIdx[obj.ID()]
+	s.lock.RUnlock()
+	if found {
 		// collect listeners to remove obj from
 		boxes := s.findBoundingBoxesByObject(curr)
 		rmListeners = collectListeners(boxes)
 		s.tree.Delete(curr)
 	}
+	s.lock.Lock()
 	s.idIdx[obj.ID()] = obj
+	s.lock.Unlock()
 
 	s.tree.Insert(obj)
 
@@ -116,7 +120,10 @@ func (s *Server) Add(obj Indexable) {
 		l.setDirty()
 	}
 
-	if lmap, found := s.idSubs[obj.ID()]; found {
+	s.lock.RLock()
+	lmap, found := s.idSubs[obj.ID()]
+	s.lock.RUnlock()
+	if found {
 		for l := range lmap {
 			l.setDirty()
 		}
@@ -125,10 +132,10 @@ func (s *Server) Add(obj Indexable) {
 
 // Remove removes a given object from the index and notifies listeners
 func (s *Server) Remove(obj Indexable) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	if curr, found := s.idIdx[obj.ID()]; found {
+	s.lock.RLock()
+	curr, found := s.idIdx[obj.ID()]
+	s.lock.RUnlock()
+	if found {
 		// collect listeners to remove obj from
 		boxes := s.findBoundingBoxesByObject(curr)
 		listeners := collectListeners(boxes)
@@ -138,7 +145,10 @@ func (s *Server) Remove(obj Indexable) {
 			l.setDirty()
 		}
 
-		if lmap, found := s.idSubs[obj.ID()]; found {
+		s.lock.RLock()
+		lmap, found := s.idSubs[obj.ID()]
+		s.lock.RUnlock()
+		if found {
 			for l := range lmap {
 				l.setDirty()
 			}

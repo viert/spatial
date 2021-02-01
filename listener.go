@@ -33,12 +33,17 @@ func newListener(srv *Server, chSize int, interval time.Duration) *Listener {
 }
 
 func (l *Listener) disposeBoxes() {
+	// No locking here as l.boxes is always overwritten and never changed
 	for _, box := range l.boxes {
 		l.srv.tree.Delete(box)
 	}
 }
 
 func (l *Listener) unsubscribeAll() {
+	// Hoping that l.srv.unsubscribeID never calls back to the listener
+	// or at least not to a method that tries to acquire the lock
+	l.lock.RLock()
+	defer l.lock.RUnlock()
 	for id := range l.watchIds {
 		l.srv.unsubscribeID(l, id)
 	}
@@ -46,11 +51,6 @@ func (l *Listener) unsubscribeAll() {
 
 // SetBounds sets bounds to listen to
 func (l *Listener) SetBounds(mb MapBounds) {
-	l.lock.Lock()
-	l.srv.lock.Lock()
-	defer l.lock.Unlock()
-	defer l.srv.lock.Unlock()
-
 	l.disposeBoxes()
 
 	rects := mb.Rects()
@@ -65,42 +65,28 @@ func (l *Listener) SetBounds(mb MapBounds) {
 
 // Stop stops the listener, closes all the channels so it's free to cleanup by GC
 func (l *Listener) Stop() {
-	l.lock.Lock()
-	l.srv.lock.Lock()
-	defer l.lock.Unlock()
-	defer l.srv.lock.Unlock()
-
 	l.disposeBoxes()
 	l.unsubscribeAll()
-
 	l.stopped = true
 }
 
 // SubscribeID adds a specific id to watch
 func (l *Listener) SubscribeID(id string) {
 	l.lock.Lock()
-	l.srv.lock.Lock()
-	defer l.lock.Unlock()
-	defer l.srv.lock.Unlock()
-
 	l.watchIds[id] = true
+	l.lock.Unlock()
 	l.srv.subscribeID(l, id)
 }
 
 // UnsubscribeID unsubscribes from a specific id
 func (l *Listener) UnsubscribeID(id string) {
 	l.lock.Lock()
-	l.srv.lock.Lock()
-	defer l.lock.Unlock()
-	defer l.srv.lock.Unlock()
-
 	delete(l.watchIds, id)
+	l.lock.Unlock()
 	l.srv.unsubscribeID(l, id)
 }
 
 func (l *Listener) setDirty() {
-	l.lock.Lock()
-	defer l.lock.Unlock()
 	l.dirty = true
 }
 
@@ -114,18 +100,18 @@ func (l *Listener) loop() {
 	defer t.Stop()
 
 	for range t.C {
-		l.lock.RLock()
 		if l.stopped {
-			l.lock.RUnlock()
 			break
 		}
 
 		if l.dirty {
 			objmap := make(map[string]Indexable)
 
+			l.lock.RLock()
 			for key, obj := range l.srv.findObjectsByIDs(l.watchIds) {
 				objmap[key] = obj
 			}
+			l.lock.RUnlock()
 
 			for key, obj := range l.srv.findObjectsByBoundingBoxes(l.boxes) {
 				objmap[key] = obj
@@ -139,7 +125,6 @@ func (l *Listener) loop() {
 			l.ch <- objects
 			l.dirty = false
 		}
-		l.lock.RUnlock()
 	}
 
 	close(l.ch)
