@@ -3,11 +3,14 @@ package spatial
 import (
 	"sync"
 	"time"
+
+	"github.com/dhconnelly/rtreego"
+	"github.com/viert/spatial/rtree"
 )
 
 // Server represents spatial index server
 type Server struct {
-	tree   *SafeRtree
+	tree   *rtree.SafeRtree
 	idSubs map[string]map[*Listener]*Listener
 	idIdx  map[string]Indexable
 	lock   sync.RWMutex
@@ -15,7 +18,7 @@ type Server struct {
 
 // New creates and initializes a new spatial Server
 func New(minBranch int, maxBranch int) *Server {
-	t := NewSafeRtree(2, minBranch, maxBranch)
+	t := rtree.New(2, minBranch, maxBranch)
 	return &Server{
 		tree:   t,
 		idSubs: make(map[string]map[*Listener]*Listener),
@@ -55,14 +58,14 @@ func (s *Server) findObjectsByIDs(ids map[string]bool) map[string]Indexable {
 	return results
 }
 
-func (s *Server) findObjectsByBoundingBoxes(boxes []*boundingBox) map[string]Indexable {
+func (s *Server) findObjectsByBoundingBoxes(boxes []*boundingBox, filters ...rtreego.Filter) map[string]Indexable {
 	s.lock.RLock()
 	defer s.lock.RUnlock()
 
 	results := make(map[string]Indexable)
 	for _, box := range boxes {
 		rect := box.bounds
-		spatials := s.tree.SearchIntersect(rect)
+		spatials := s.tree.SearchIntersect(rect, filters...)
 		for _, sp := range spatials {
 			if idxbl, ok := sp.(Indexable); ok {
 				if idxbl.Type() > 0 {
@@ -76,11 +79,10 @@ func (s *Server) findObjectsByBoundingBoxes(boxes []*boundingBox) map[string]Ind
 }
 
 func (s *Server) findBoundingBoxesByObject(idx Indexable) []boundingBox {
-	intersections := s.tree.SearchIntersect(idx.Bounds())
+	intersections := s.tree.SearchIntersect(idx.Bounds(), filterBoundingBoxes)
 	boxes := make([]boundingBox, 0)
 	for _, obj := range intersections {
-		idxbl, ok := obj.(Indexable)
-		if ok && idxbl.Type() == itBoundingBox {
+		if idxbl, ok := obj.(Indexable); ok {
 			if box, ok := idxbl.(*boundingBox); ok {
 				boxes = append(boxes, *box)
 			}

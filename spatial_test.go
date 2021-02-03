@@ -9,8 +9,10 @@ import (
 )
 
 const (
-	itUserObject IndexableType = 1
-	testObjectID               = "obj1"
+	itUserObject  IndexableType = 1
+	itUserObject2 IndexableType = 2
+
+	testObjectID = "obj1"
 )
 
 var (
@@ -24,8 +26,9 @@ var (
 
 type (
 	object struct {
-		id   string
-		rect *rtreego.Rect
+		id      string
+		rect    *rtreego.Rect
+		objType IndexableType
 	}
 )
 
@@ -34,7 +37,7 @@ func (o *object) ID() string {
 }
 
 func (o *object) Type() IndexableType {
-	return itUserObject
+	return o.objType
 }
 
 func (o *object) Bounds() *rtreego.Rect {
@@ -45,11 +48,15 @@ func (o *object) Ref() interface{} {
 	return nil
 }
 
-func newObject(id string, lat float64, lng float64) *object {
+func newObject(oType IndexableType, id string, lat float64, lng float64) *object {
 	p := rtreego.Point{lng, lat}
 	rect, _ := rtreego.NewRect(p, []float64{0.1, 0.1})
 
-	return &object{id, rect}
+	return &object{id, rect, oType}
+}
+
+func newRectObject(oType IndexableType, id string, rect *rtreego.Rect) *object {
+	return &object{id, rect, oType}
 }
 
 func timeout(n time.Duration) <-chan time.Time {
@@ -96,7 +103,7 @@ func TestBoundsUpdate(t *testing.T) {
 		return
 	}
 
-	obj := newObject(testObjectID, 0, 0)
+	obj := newObject(itUserObject, testObjectID, 0, 0)
 	srv.Add(obj)
 
 	updates = getUpdates(ch)
@@ -123,7 +130,7 @@ func TestBoundsUpdate(t *testing.T) {
 		return
 	}
 
-	obj = newObject(testObjectID, 3, 3)
+	obj = newObject(itUserObject, testObjectID, 3, 3)
 	srv.Add(obj)
 
 	updates = getUpdates(ch)
@@ -151,7 +158,7 @@ func TestBoundsUpdate(t *testing.T) {
 	}
 
 	// move outside
-	obj = newObject(testObjectID, 12, 12)
+	obj = newObject(itUserObject, testObjectID, 12, 12)
 	srv.Add(obj)
 
 	updates = getUpdates(ch)
@@ -187,7 +194,7 @@ func TestWatchID(t *testing.T) {
 		return
 	}
 
-	obj := newObject(testObjectID, 0, 0)
+	obj := newObject(itUserObject, testObjectID, 0, 0)
 	srv.Add(obj)
 
 	updates = getUpdates(ch)
@@ -214,7 +221,7 @@ func TestWatchID(t *testing.T) {
 		return
 	}
 
-	obj = newObject(testObjectID, 3, 3)
+	obj = newObject(itUserObject, testObjectID, 3, 3)
 	srv.Add(obj)
 
 	updates = getUpdates(ch)
@@ -242,7 +249,7 @@ func TestWatchID(t *testing.T) {
 	}
 
 	// move outside
-	obj = newObject(testObjectID, 12, 12)
+	obj = newObject(itUserObject, testObjectID, 12, 12)
 	srv.Add(obj)
 
 	updates = getUpdates(ch)
@@ -267,6 +274,71 @@ func TestWatchID(t *testing.T) {
 			obj.rect.PointCoord(0), obj.rect.PointCoord(1),
 		)
 		return
+	}
+
+}
+
+func TestFilters(t *testing.T) {
+	srv := New(25, 50)
+	lst := srv.NewListener(100, time.Second)
+	defer lst.Stop()
+
+	obj := newObject(itUserObject, testObjectID, 0, 0)
+	srv.Add(obj)
+
+	obj2 := newObject(itUserObject2, "obj2", 0.1, 0.1)
+	srv.Add(obj2)
+
+	p := rtreego.Point{-1.0, -1.0}
+	rect, _ := rtreego.NewRect(p, []float64{2.0, 2.0})
+
+	boxObj := newRectObject(itBoundingBox, "box1", rect)
+	srv.Add(boxObj)
+
+	p = rtreego.Point{-30.0, -30.0}
+	rect, _ = rtreego.NewRect(p, []float64{60.0, 60.0})
+	bounds := newBoundingBox(rect, lst)
+	srv.Add(bounds)
+
+	results := srv.findObjectsByBoundingBoxes([]*boundingBox{bounds})
+
+	if len(results) != 2 {
+		t.Errorf("expected exactly 2 objects, but %d were found", len(results))
+		return
+	}
+
+	for id := range results {
+		if id != obj.id && id != obj2.id {
+			t.Errorf("unexpected object with id \"%s\" found", id)
+		}
+	}
+
+	results = srv.findObjectsByBoundingBoxes(
+		[]*boundingBox{bounds},
+		FilterByTypes([]IndexableType{itUserObject}),
+	)
+
+	if len(results) != 1 {
+		t.Errorf("expected exactly 1 object, but %d were found", len(results))
+		return
+	}
+
+	if _, found := results[obj.id]; !found {
+		t.Errorf("object %s is expected to be in results", obj.id)
+	}
+
+	results = srv.findObjectsByBoundingBoxes(
+		[]*boundingBox{bounds},
+		FilterByTypes([]IndexableType{itUserObject2}),
+	)
+
+	if len(results) != 1 {
+		t.Errorf("expected exactly 1 object, but %d were found", len(results))
+		return
+	}
+
+	if _, found := results[obj2.id]; !found {
+		t.Errorf("object %s is expected to be in results", obj.id)
 	}
 
 }
