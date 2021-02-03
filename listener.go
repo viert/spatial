@@ -3,6 +3,8 @@ package spatial
 import (
 	"sync"
 	"time"
+
+	"github.com/dhconnelly/rtreego"
 )
 
 // Listener is an object watching for objects in bounding boxes and with specific ids
@@ -12,6 +14,7 @@ type Listener struct {
 	srv            *Server
 	ch             chan []Indexable
 	boxes          []*boundingBox
+	filter         rtreego.Filter
 	watchIds       map[string]bool
 	updateInterval time.Duration
 	dirty          bool
@@ -23,6 +26,7 @@ func newListener(srv *Server, chSize int, interval time.Duration) *Listener {
 		srv:            srv,
 		ch:             make(chan []Indexable, chSize),
 		boxes:          make([]*boundingBox, 0),
+		filter:         nil,
 		watchIds:       make(map[string]bool),
 		updateInterval: interval,
 		stopped:        false,
@@ -63,6 +67,16 @@ func (l *Listener) SetBounds(mb MapBounds) {
 	l.boxes = boxes
 }
 
+// SetTypes sets a filter to listen for objects of specified types only
+// Does not apply for ID subscriptions
+func (l *Listener) SetTypes(types []IndexableType) {
+	if len(types) == 0 {
+		l.filter = nil
+	} else {
+		l.filter = FilterByTypes(types)
+	}
+}
+
 // Stop stops the listener, closes all the channels so it's free to cleanup by GC
 func (l *Listener) Stop() {
 	l.disposeBoxes()
@@ -96,6 +110,7 @@ func (l *Listener) Updates() <-chan []Indexable {
 }
 
 func (l *Listener) loop() {
+	var rmap map[string]Indexable
 	t := time.NewTicker(l.updateInterval)
 	defer t.Stop()
 
@@ -113,7 +128,13 @@ func (l *Listener) loop() {
 			}
 			l.lock.RUnlock()
 
-			for key, obj := range l.srv.findObjectsByBoundingBoxes(l.boxes) {
+			if l.filter == nil {
+				rmap = l.srv.findObjectsByBoundingBoxes(l.boxes)
+			} else {
+				rmap = l.srv.findObjectsByBoundingBoxes(l.boxes, l.filter)
+			}
+
+			for key, obj := range rmap {
 				objmap[key] = obj
 			}
 
