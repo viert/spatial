@@ -100,6 +100,11 @@ func (l *Listener) UnsubscribeID(id string) {
 	l.srv.unsubscribeID(l, id)
 }
 
+// ForceUpdate forces the dirty flag on
+func (l *Listener) ForceUpdate() {
+    l.setDirty()
+}
+
 func (l *Listener) setDirty() {
 	l.dirty = true
 }
