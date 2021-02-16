@@ -162,3 +162,21 @@ func (s *Server) Remove(obj Indexable) {
 func (s *Server) NewListener(chSize int, interval time.Duration) *Listener {
 	return newListener(s, chSize, interval)
 }
+
+// SearchIntersect syncronously search for intersections
+// Use this for quick searches if you don't need to subscribe for updates
+func (s *Server) SearchIntersect(bb *rtreego.Rect, filters ...rtreego.Filter) map[string]Indexable {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
+	results := make(map[string]Indexable)
+	spatials := s.tree.SearchIntersect(bb, filters...)
+	for _, sp := range spatials {
+		if idxbl, ok := sp.(Indexable); ok {
+			if idxbl.Type() > 0 {
+				results[idxbl.ID()] = idxbl
+			}
+		}
+	}
+	return results
+}
