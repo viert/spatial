@@ -23,6 +23,7 @@ type Object struct {
 	id      string
 	ref     interface{}
 	bounds  *rtreego.Rect
+	meta    map[string]string
 	objType IndexableType
 }
 
@@ -46,12 +47,28 @@ func (o *Object) Type() IndexableType {
 	return o.objType
 }
 
+// Meta is Object meta getter
+func (o *Object) Meta(key string) string {
+	return o.meta[key]
+}
+
+// HasMetaKey is Object meta key checker
+func (o *Object) HasMetaKey(key string) bool {
+	_, found := o.meta[key]
+	return found
+}
+
 // NewObject creates a new instance of Object
-func NewObject(id string, objType IndexableType, bounds *rtreego.Rect, ref interface{}) *Object {
+func NewObject(id string, objType IndexableType, bounds *rtreego.Rect, ref interface{}, meta map[string]string) *Object {
+	if meta == nil {
+		meta = make(map[string]string)
+	}
+
 	return &Object{
 		id:      id,
 		objType: objType,
 		bounds:  bounds,
 		ref:     ref,
+		meta:    meta,
 	}
 }
