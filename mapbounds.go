@@ -17,10 +17,10 @@ type MapBounds struct {
 
 // Rect converts MapBounds to rtregoo Rect
 func (mb *MapBounds) rect() *rtreego.Rect {
-	point := rtreego.Point{mb.SouthWestLng, mb.SouthWestLat}
-	width := mb.NorthEastLng - mb.SouthWestLng
-	height := mb.NorthEastLat - mb.SouthWestLat
-	rect, _ := rtreego.NewRect(point, []float64{width, height})
+	point := rtreego.Point{mb.SouthWestLat, mb.SouthWestLng}
+	lngSize := mb.NorthEastLng - mb.SouthWestLng
+	latSize := mb.NorthEastLat - mb.SouthWestLat
+	rect, _ := rtreego.NewRect(point, []float64{latSize, lngSize})
 	return rect
 }
 
